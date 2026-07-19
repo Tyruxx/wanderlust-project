@@ -107,6 +107,68 @@ without receiving unrestricted control:
   evidence or collapsing the entire workflow; unavailable capabilities return
   bounded fallbacks or clear user-facing errors.
 
+### ADK Planning Workflow
+
+The planning path combines ADK agent roles with deterministic orchestration.
+The ADK workflow registry defines a sequential intake → discovery → verification
+→ planner pipeline and parallel grounded-search specialists. The planning
+service controls execution, joins evidence, validates every model result, and
+enforces product rules before anything can be persisted.
+
+```mermaid
+flowchart TD
+    Request[Trip brief, day rules, and local preferences] --> RequestSchema[Pydantic request validation]
+    RequestSchema --> Intake[Trip intake and constraint normalization]
+
+    Intake --> FanOut{Bounded parallel retrieval}
+
+    subgraph RetrievalLanes[Independent retrieval lanes]
+        MapsLane[Google Places candidate discovery]
+        WeatherLane[Region geocode and weather context]
+        SearchCoordinator[ADK ParallelAgent search coordinator]
+
+        SearchCoordinator --> Food[Food specialist LlmAgent]
+        SearchCoordinator --> Culture[Culture specialist LlmAgent]
+        SearchCoordinator --> Events[Events and openings LlmAgent]
+        SearchCoordinator --> Logistics[Logistics specialist LlmAgent]
+        SearchCoordinator --> Gems[Hidden gems LlmAgent]
+    end
+
+    FanOut --> MapsLane
+    FanOut --> WeatherLane
+    FanOut --> SearchCoordinator
+
+    MapsLane --> Join[Bounded join]
+    WeatherLane --> Join
+    Food --> Join
+    Culture --> Join
+    Events --> Join
+    Logistics --> Join
+    Gems --> Join
+
+    WeatherLane -. unavailable .-> Degraded[Continue without optional weather evidence]
+    SearchCoordinator -. unavailable .-> DegradedSearch[Continue without grounded-search evidence]
+    MapsLane -. required lane failure .-> PlanningError[Return a bounded planning error]
+
+    Degraded --> Join
+    DegradedSearch --> Join
+    Join --> Evidence[Merge, dedupe, rank, preserve citations]
+    Evidence --> Verification[Verification agent and source-confidence checks]
+
+    Verification --> Planner[Planner LlmAgent synthesis]
+    Planner --> OutputSchema[Planner output schema validation]
+    OutputSchema --> Rules[Enforce day dates, start/end places and times, and specific activity names]
+    Rules --> RecommendationGate[Recommendation confidence and evidence guardrails]
+    RecommendationGate --> Result[Validated itinerary, evidence, recommendations, and agent metadata]
+    Result --> Persist[FastAPI persists an INACTIVE itinerary in device-scoped Firestore]
+```
+
+No retrieval agent writes itineraries or invokes side effects directly. Maps is
+the required place-discovery lane; grounded search and weather can degrade
+independently. Planner JSON must pass typed validation, mandatory trip rules,
+generic-place filtering, and recommendation guardrails before the API stores or
+returns it.
+
 This structure keeps agents independently testable and replaceable while the
 public API contracts, safety boundaries, and storage model remain stable.
 
