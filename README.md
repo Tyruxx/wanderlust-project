@@ -113,61 +113,46 @@ The planning path combines ADK agent roles with deterministic orchestration.
 The ADK workflow registry defines a sequential intake → discovery → verification
 → planner pipeline and parallel grounded-search specialists. The planning
 service controls execution, joins evidence, validates every model result, and
-enforces product rules before anything can be persisted.
+enforces product rules before the itinerary is returned to Flutter.
 
 ```mermaid
 flowchart TD
-    Request[Trip brief, day rules, and local preferences] --> RequestSchema[Pydantic request validation]
-    RequestSchema --> Intake[Trip intake and constraint normalization]
+    Click["User taps Generate itinerary"] --> Submit["Flutter sends trip brief,<br/>preferences, and day rules"]
+    Submit --> Validate["FastAPI validates<br/>the request schema"]
+    Validate --> Intake["Intake agent normalizes<br/>planning constraints"]
+    Intake --> FanOut{"Gather evidence<br/>in parallel"}
 
-    Intake --> FanOut{Bounded parallel retrieval}
-
-    subgraph RetrievalLanes[Independent retrieval lanes]
-        MapsLane[Google Places candidate discovery]
-        WeatherLane[Region geocode and weather context]
-        SearchCoordinator[ADK ParallelAgent search coordinator]
-
-        SearchCoordinator --> Food[Food specialist LlmAgent]
-        SearchCoordinator --> Culture[Culture specialist LlmAgent]
-        SearchCoordinator --> Events[Events and openings LlmAgent]
-        SearchCoordinator --> Logistics[Logistics specialist LlmAgent]
-        SearchCoordinator --> Gems[Hidden gems LlmAgent]
+    subgraph Retrieval[Parallel retrieval]
+        Maps["Maps lane<br/>Places and geocoding"]
+        Weather["Weather lane<br/>Destination context"]
+        Search["ADK ParallelAgent<br/>5 grounded specialists"]
     end
 
-    FanOut --> MapsLane
-    FanOut --> WeatherLane
-    FanOut --> SearchCoordinator
+    FanOut --> Maps
+    FanOut --> Weather
+    FanOut --> Search
 
-    MapsLane --> Join[Bounded join]
-    WeatherLane --> Join
-    Food --> Join
-    Culture --> Join
-    Events --> Join
-    Logistics --> Join
-    Gems --> Join
+    Maps --> Merge["Merge and dedupe<br/>all candidates"]
+    Weather --> Merge
+    Search --> Merge
 
-    WeatherLane -. unavailable .-> Degraded[Continue without optional weather evidence]
-    SearchCoordinator -. unavailable .-> DegradedSearch[Continue without grounded-search evidence]
-    MapsLane -. required lane failure .-> PlanningError[Return a bounded planning error]
+    Weather -. optional lane unavailable .-> Merge
+    Search -. optional lane unavailable .-> Merge
+    Maps -. required lane failure .-> Error["Return a clear<br/>planning error"]
 
-    Degraded --> Join
-    DegradedSearch --> Join
-    Join --> Evidence[Merge, dedupe, rank, preserve citations]
-    Evidence --> Verification[Verification agent and source-confidence checks]
-
-    Verification --> Planner[Planner LlmAgent synthesis]
-    Planner --> OutputSchema[Planner output schema validation]
-    OutputSchema --> Rules[Enforce day dates, start/end places and times, and specific activity names]
-    Rules --> RecommendationGate[Recommendation confidence and evidence guardrails]
-    RecommendationGate --> Result[Validated itinerary, evidence, recommendations, and agent metadata]
-    Result --> Persist[FastAPI persists an INACTIVE itinerary in device-scoped Firestore]
+    Merge --> Verify["Verification agent checks<br/>sources and confidence"]
+    Verify --> Plan["Planner agent creates<br/>the day-by-day itinerary"]
+    Plan --> Guard["Validate output and enforce<br/>times, places, and guardrails"]
+    Guard --> Response["FastAPI returns the validated<br/>itinerary and evidence"]
+    Response --> Display["Flutter displays the<br/>AI-generated itinerary"]
 ```
 
-No retrieval agent writes itineraries or invokes side effects directly. Maps is
-the required place-discovery lane; grounded search and weather can degrade
-independently. Planner JSON must pass typed validation, mandatory trip rules,
-generic-place filtering, and recommendation guardrails before the API stores or
-returns it.
+This diagram begins when the traveler presses **Generate itinerary** and ends
+when Flutter receives and displays the result. It intentionally excludes later
+status changes such as starting the itinerary. Maps is the required discovery
+lane; grounded search and weather can degrade independently. Planner JSON must
+pass typed validation, mandatory trip rules, generic-place filtering, and
+recommendation guardrails before the API returns it to Flutter.
 
 This structure keeps agents independently testable and replaceable while the
 public API contracts, safety boundaries, and storage model remain stable.
