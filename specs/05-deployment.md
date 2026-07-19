@@ -1,181 +1,100 @@
 # Deployment
 
-The backend runs standalone locally for development, but production app usage
-targets Cloud Run. Production backend app state is device-scoped Firestore
-storage keyed by the anonymous `X-User-Id` device ID that Flutter generates on
-first launch. SQLite is retained only for local development and tests.
+The canonical operator instructions are in the project-root `README.md`. This
+spec defines the deployment constraints that implementations and documentation
+must preserve.
 
-Local development reads `.env`; Cloud Run deployment uses Secret Manager for
-API keys, Twilio credentials, and optional Stripe server-side credentials when
-a legitimate Stripe-backed provider flow is added.
+## Backend Runtime
 
-Twilio call logs are stored in Firestore when the call service runs on Google
-Cloud. These logs must be minimal and redacted.
+- The application backend is cloud-only and runs on Google Cloud Run.
+- Do not provide or depend on a locally running FastAPI service for Flutter.
+- Backend lint and isolated tests may run locally; they are not an application
+  runtime.
+- Cloud Run exposes every API feature plus the public Twilio HTTPS/WSS
+  callbacks required by Gemini Live booking calls.
+- The current live-call bridge keeps process-local session state, so production
+  remains pinned to one warm Cloud Run instance until external session storage
+  is implemented.
 
-## Local
+## Persistence And Identity
 
-```bash
-cd wanderlust-backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+- Firestore is the production backend source of truth.
+- Every backend document is scoped by Flutter's anonymous `X-User-Id` device
+  ID. This is not login or account identity.
+- Flutter stores preferences, itinerary data, cache, and the device ID in its
+  application sandbox according to the product guardrails.
+- SQLite or in-memory backend repositories exist only for isolated automated
+  tests and must not be documented as a supported backend runtime.
+- Resetting preferences never resets the anonymous routing ID or deletes saved
+  itineraries.
 
-Set env vars in `.env` for real service calls: `GOOGLE_API_KEY` (Gemini),
-`GOOGLE_MAPS_BACKEND_API_KEY` (Maps), Twilio/Gemini Live values for booking
-calls, and optional Stripe server-side values only for valid Stripe-backed
-provider flows. `PUBLIC_BACKEND_BASE_URL`
-must be a public HTTPS URL for Twilio webhook/WSS callbacks.
+## Cloud Resources
 
-## Production (Cloud Run)
+The supported deployment provisions or uses:
 
-Cloud Run provides the public HTTPS/WSS endpoint required by all backend
-features and by Twilio Media Streams/Gemini Live booking calls. The mobile app
-remains no-login: it generates a local anonymous `anon_...` device ID and sends
-it as `X-User-Id` for backend routing and Firestore device-scoped storage.
+- Cloud Run for FastAPI and Google ADK workflows.
+- Cloud Build and Artifact Registry for container builds.
+- Firestore for device-scoped backend state and redacted booking-call logs.
+- Secret Manager for Gemini, Maps backend, and Twilio credentials.
+- A dedicated runtime service account with `roles/datastore.user` and narrow
+  per-secret access. Broad owner/editor roles are forbidden.
 
-For a production-ready setup, use `../PRODUCTION_SETUP.md` as the operator
-checklist. The summary is: prepare GCP resources, add Secret Manager versions,
-deploy Cloud Run, then build the iOS app with the Cloud Run URL as
-`PUBLIC_BACKEND_BASE_URL`.
+The repository provides two infrastructure paths:
 
-1. Prepare required Google Cloud resources:
+- `wanderlust-backend/scripts/setup_gcp_resources.sh` followed by
+  `wanderlust-backend/scripts/deploy_cloud_run.sh` for the recommended direct
+  deployment.
+- `wanderlust-backend/infra/cloud-run/` for Terraform-managed infrastructure.
 
-```bash
-cd wanderlust-backend
-GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
-GOOGLE_CLOUD_REGION=asia-southeast1 \
-./scripts/setup_gcp_resources.sh
-```
+Do not operate both paths as competing owners of the same resources without
+reconciling Terraform state.
 
-The setup script enables Cloud Run, Cloud Build, Artifact Registry, Firestore,
-Secret Manager, Vertex AI/Gemini, and the Google Maps Platform APIs used by the
-backend. It creates the runtime service account, Artifact Registry repository,
-default Firestore database when missing, and required Secret Manager secrets
-when missing. It grants only `roles/datastore.user` plus per-secret accessor
-permissions to the Cloud Run service account.
+## Secrets
 
-2. Add or rotate required Secret Manager secret versions:
+- Local deployment/build values may live only in the ignored
+  `wanderlust-backend/.env`.
+- Cloud Run receives backend credentials from Secret Manager.
+- Flutter receives only the public Cloud Run URL and the iOS-restricted Maps
+  key at build time.
+- Never commit `.env`, API keys, Twilio credentials, service-account JSON,
+  signing certificates, or provisioning profiles.
+- The iOS Maps key must be restricted to the production bundle identifier and
+  required iOS Maps APIs.
 
-```bash
-printf '%s' "$GOOGLE_API_KEY" | gcloud secrets versions add google-api-key --data-file=-
-printf '%s' "$GOOGLE_MAPS_BACKEND_API_KEY" | gcloud secrets versions add google-maps-backend-api-key --data-file=-
-printf '%s' "$TWILIO_ACCOUNT_SID" | gcloud secrets versions add twilio-account-sid --data-file=-
-printf '%s' "$TWILIO_AUTH_TOKEN" | gcloud secrets versions add twilio-auth-token --data-file=-
-printf '%s' "$TWILIO_FROM_NUMBER" | gcloud secrets versions add twilio-from-number --data-file=-
-```
+## Flutter Development
 
-3. Deploy with the script:
+- Deploy Cloud Run before running Flutter.
+- Every local, Simulator, physical-device, TestFlight, and App Store build must
+  receive the same deployed HTTPS service as `PUBLIC_BACKEND_BASE_URL`.
+- `BACKEND_BASE_URL` and `CALL_SERVICE_BASE_URL` may resolve to that same URL.
+- Localhost backend URLs are unsupported in debug and release builds.
+- The iOS app never embeds Python, backend service-account material, Gemini
+  keys, Maps backend keys, Twilio credentials, or provider secrets.
 
-```bash
-cd wanderlust-backend
-GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
-GOOGLE_CLOUD_REGION=asia-southeast1 \
-./scripts/deploy_cloud_run.sh
-```
+## App Store Delivery
 
-The script builds the image, deploys Cloud Run, and updates
-`PUBLIC_BACKEND_BASE_URL` to the generated service URL unless a custom public
-URL is supplied. The current booking-call bridge keeps live session state in
-process memory, so Cloud Run is pinned to one warm instance until external
-session storage is added.
+- The distributable artifact is one signed Flutter iOS IPA.
+- App Store builds must reject missing, localhost, or non-HTTPS backend URLs.
+- The bundle identifier must match Apple Developer, App Store Connect, signing,
+  and Google Maps iOS restrictions.
+- Upload occurs through Xcode Organizer or Apple's Transporter after the IPA is
+  built by `wanderlust-frontend-flutter/scripts/build_ios_app_store.sh`.
 
-Production app-state storage uses Firestore when
-`WANDERLUST_STORAGE_BACKEND=firestore` and stores repository documents under
-collections prefixed by `FIRESTORE_COLLECTION_PREFIX` (default `wanderlust`).
-Cloud call logging uses Firestore when `CALL_LOG_BACKEND=firestore` and stores
-status-transition events under `CALL_LOG_COLLECTION` (default:
-`wanderlust_booking_call_logs`). The deploy script and Terraform grant
-`roles/datastore.user` to the Cloud Run service account; do not grant broad
-project-owner permissions for this path.
+## Verification
 
-4. Or deploy with Terraform:
+Before release:
 
 ```bash
 cd wanderlust-backend
-IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/wanderlust/wanderlust-backend:$(git rev-parse --short HEAD)"
-gcloud builds submit --project "$PROJECT_ID" --tag "$IMAGE" .
-cd infra/cloud-run
-terraform init
-terraform apply -var="project_id=$PROJECT_ID" -var="region=$REGION" -var="image=$IMAGE"
+.venv/bin/ruff check app tests scripts
+env WANDERLUST_DB=memory .venv/bin/python -m pytest
+
+cd ../wanderlust-frontend-flutter
+flutter analyze
+flutter test
 ```
 
-5. Point the Flutter app at the deployed URL:
-
-```bash
-flutter run --dart-define=PUBLIC_BACKEND_BASE_URL="$CLOUD_RUN_URL" \
-  --dart-define=BACKEND_BASE_URL="$CLOUD_RUN_URL" \
-  --dart-define=GOOGLE_MAPS_IOS_API_KEY="$GOOGLE_MAPS_IOS_API_KEY"
-```
-
-6. Verify the deployed backend:
-
-```bash
-curl "$CLOUD_RUN_URL/readyz"
-```
-
-Twilio must be able to reach these public endpoints:
-
-- `POST/GET $CLOUD_RUN_URL/v1/booking-calls/twiml/{stream_token}`
-- `WSS wss://.../v1/booking-calls/stream/{stream_token}`
-- `POST $CLOUD_RUN_URL/v1/booking-calls/twilio-status`
-
-For an end-to-end live call smoke test, use a safe Twilio-verified destination
-number:
-
-```bash
-cd wanderlust-backend
-WANDERLUST_RUN_TWILIO_E2E=1 \
-WANDERLUST_TWILIO_E2E_TO_NUMBER="+15551234567" \
-.venv/bin/python -m pytest tests/test_twilio_e2e.py
-```
-
-## Flutter
-
-```bash
-# From project root:
-flutter run --dart-define=GOOGLE_MAPS_IOS_API_KEY="$GOOGLE_MAPS_IOS_API_KEY"
-```
-
-Defaults to `BACKEND_BASE_URL=http://127.0.0.1:8000`. Override via
-`--dart-define=BACKEND_BASE_URL=...` to point at a deployed backend.
-For the normal local stack, prefer `./start.sh` from the project root. It reads
-`PUBLIC_BACKEND_BASE_URL` or `CALL_SERVICE_BASE_URL` from `wanderlust-backend/.env` and
-passes it to Flutter as `CALL_SERVICE_BASE_URL`, so the local UI can route
-booking-call start/status requests to the cloud call service without redefining
-the value on every launch.
-
-The app generates and persists an anonymous local device ID once per install.
-This ID contains no personal details and is sent as `X-User-Id` on backend
-requests. Resetting travel preferences must not reset this routing ID.
-
-## App Store IPA
-
-The App Store artifact is a single iOS app IPA. The IPA contains the Flutter
-frontend and local SQLite persistence, but it must not bundle the Python/FastAPI
-backend, service-account material, Twilio credentials, Gemini keys, or Stripe
-provider secrets. Those server-side capabilities run on the deployed HTTPS
-backend/call service.
-
-Use the frontend build helper:
-
-```bash
-cd wanderlust-frontend-flutter
-./scripts/build_ios_app_store.sh
-```
-
-Required build-time values:
-
-- `BACKEND_BASE_URL` or `PUBLIC_BACKEND_BASE_URL`: deployed HTTPS backend URL.
-- `CALL_SERVICE_BASE_URL`: optional; defaults to the backend URL.
-- `GOOGLE_MAPS_IOS_API_KEY`: iOS-restricted Maps key for on-device map rendering.
-
-The build helper refuses localhost backend URLs. In an installed iOS app,
-`127.0.0.1` would point to the user's device and the backend-dependent features
-would fail.
-
-## CI Checks
-
-```bash
-python -m pytest tests/
-ruff check app tests scripts
-```
+Also verify the deployed `/readyz` endpoint, Firestore device scoping, package
+search, itinerary generation, routes, Ask Agent Anything, active-only location
+events, Twilio callbacks, and booking-call WebSocket status updates against the
+same Cloud Run URL used by Flutter.

@@ -23,7 +23,7 @@ deployment, model-output handling, or API key handling, also load and follow:
 | `02-mvp-roadmap-risks.md` | MVP scope, timeline, risk register | MVP features, release criteria, risk register, dependencies | Product, PM |
 | `03-product-workflows-and-guardrails.md` | Source-of-truth product constraints | preference onboarding, itinerary lifecycle, active mode, recommendation rules, reset behavior, data model | Engineering, QA, Agents |
 | `04-agentic-backend-plan.md` | Archived completed backend plan and progress log | historical FastAPI/ADK implementation, completed local SQLite backend, completed booking-call work | Backend Engineering, Agents |
-| `05-deployment.md` | Local and production deployment | local setup, Cloud Run, Flutter config, CI checks | Engineering, DevOps |
+| `05-deployment.md` | Cloud-only backend deployment | Cloud Run, Firestore, Flutter config, App Store constraints | Engineering, DevOps |
 | `06-actions-commerce-call-plan.md` | Living plan for activity Actions, venue calls, package checkout, and Ask Agent Anything | Actions CTA, call venue, provider checkout, optional Stripe-backed checkout, Profile rename, cloud call logs, verification | Product, Engineering, QA, Agents |
 | `agentic-architecture.puml` | PlantUML architecture diagram | system context, component relationships | Architecture |
 
@@ -73,12 +73,14 @@ Before Flutter changes:
 - No end-user identity-provider. Backend receives `X-User-Id` header only.
 - Production backend features run on Cloud Run. Backend app state is stored in
   Firestore using the anonymous `X-User-Id` device ID as the user scope.
-- SQLite remains a local development and test fallback only.
+- SQLite/in-memory backend repositories are isolated test fixtures only; a
+  locally running backend is not a supported application runtime.
 - Twilio call logs use a Google Cloud database when the call service is hosted
   for public Twilio webhook/WSS callbacks, and must remain redacted.
 - Google Cloud is used for external API calls, Cloud Run hosting, Firestore
   device-scoped state, and Twilio webhook/WSS callbacks.
-- Local development reads API keys from `.env`; Cloud Run deployment injects secrets from Secret Manager.
+- Local deployment and Flutter build tooling may read the ignored `.env`;
+  Cloud Run receives backend secrets from Secret Manager.
 - Keep external tools narrow, validated, allowlisted, and least-privileged.
 - Provider checkout secrets and Stripe secret keys must remain server-side;
   Flutter must never store raw payment-card data, saved-card data, or local
@@ -88,5 +90,6 @@ Before Flutter changes:
 
 - `../skills/wanderlust-execution-workflow/SKILL.md` — mandatory execution workflow for project development tasks.
 - `../skills/wanderlust-agentic-security/SKILL.md` — mandatory security skill for agentic changes.
-- `../wanderlust-backend/README.md` — backend local setup and guardrails summary.
+- `../README.md` — canonical Cloud Run deployment, Flutter, and App Store guide.
+- `../wanderlust-backend/README.md` — backend cloud deployment and guardrails summary.
 - `../wanderlust-frontend-flutter/README.md` — Flutter frontend setup and guardrails summary.
