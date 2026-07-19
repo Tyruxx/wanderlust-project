@@ -136,10 +136,6 @@ flowchart TD
     Weather --> Merge
     Search --> Merge
 
-    Weather -. optional lane unavailable .-> Merge
-    Search -. optional lane unavailable .-> Merge
-    Maps -. required lane failure .-> Error["Return a clear<br/>planning error"]
-
     Merge --> Verify["Verification agent checks<br/>sources and confidence"]
     Verify --> Plan["Planner agent creates<br/>the day-by-day itinerary"]
     Plan --> Guard["Validate output and enforce<br/>times, places, and guardrails"]
@@ -149,10 +145,9 @@ flowchart TD
 
 This diagram begins when the traveler presses **Generate itinerary** and ends
 when Flutter receives and displays the result. It intentionally excludes later
-status changes such as starting the itinerary. Maps is the required discovery
-lane; grounded search and weather can degrade independently. Planner JSON must
-pass typed validation, mandatory trip rules, generic-place filtering, and
-recommendation guardrails before the API returns it to Flutter.
+status changes such as starting the itinerary. Planner JSON must pass typed
+validation, mandatory trip rules, generic-place filtering, and recommendation
+guardrails before the API returns it to Flutter.
 
 This structure keeps agents independently testable and replaceable while the
 public API contracts, safety boundaries, and storage model remain stable.
