@@ -6,6 +6,110 @@ Firestore under the anonymous device ID sent as `X-User-Id`. The backend is a
 cloud-only runtime; developers run Flutter locally against the deployed HTTPS
 service.
 
+## Problem Statement
+
+Travel planning is rarely linear. Travelers describe goals loosely, discover
+places across fragmented sources, change their minds, encounter closures or
+delays, and drift away from the original schedule. Traditional itinerary apps
+treat the plan as fixed, while many AI planners stop being useful after they
+generate a generic list of places.
+
+That leaves several practical problems:
+
+- Recommendations may be stale, geographically inefficient, or disconnected
+  from the traveler's actual interests and time constraints.
+- A delay, skipped stop, or route change can make the rest of a day unrealistic.
+- Booking contacts, packages, transport options, and current venue information
+  are scattered across unrelated services.
+- Social and web discovery can surface useful ideas, but those claims may be
+  inaccurate, sponsored, outdated, or unsafe to trust without verification.
+- Location-aware assistance is useful only when collection, active-mode
+  behavior, and user acceptance are explicit and understandable.
+
+Wanderlust addresses this by turning natural-language trip intent into a
+grounded, route-aware itinerary, then remaining useful during the trip. It can
+research places, compare transport options, answer activity-specific questions,
+find verified provider links, assist with venue calls, and propose itinerary
+recovery when an ACTIVE trip deviates from plan. Agents investigate and reason,
+but lifecycle changes, persistence, calls, purchases, and itinerary rewrites
+remain behind typed validation and explicit user action.
+
+The product promise is: **plan with an agent, then let the agent adapt with you
+while you travel without surrendering control.**
+
+## App Architecture
+
+Wanderlust uses a local-first Flutter client with a cloud-only backend. Flutter
+owns the mobile experience, local preferences/cache, map interaction, location
+permissions, and explicit confirmation UI. Cloud Run hosts FastAPI, Google ADK
+workflows, deterministic policy gates, and integrations that require protected
+server credentials. Firestore stores backend state under an anonymous device
+scope rather than an end-user account.
+
+```mermaid
+flowchart TB
+    User[Traveler] --> Flutter[Flutter iOS app]
+    Flutter -->|HTTPS and X-User-Id| API[FastAPI on Cloud Run]
+
+    API --> Guards[Typed schemas and deterministic guardrails]
+    Guards --> Planner[ADK planning workflow]
+    Guards --> Actions[ADK activity action workflows]
+    Guards --> Active[ACTIVE itinerary event workflow]
+
+    Planner --> Intake[Sequential intake and normalization]
+    Intake --> Retrieval[Parallel retrieval fan-out]
+    Retrieval --> Maps[Places, Routes, Geocoding, Weather]
+    Retrieval --> Search[Grounded search specialist agents]
+    Maps --> Verify[Merge, dedupe, rank, and verify]
+    Search --> Verify
+    Verify --> Synthesis[Planner synthesis]
+
+    Actions --> Ask[Ask Agent Anything]
+    Actions --> Packages[Package discovery and link verification]
+    Actions --> Booking[Booking intake and locale resolution]
+
+    Booking --> Twilio[Twilio Programmable Voice]
+    Booking --> Live[Gemini Live voice bridge]
+    Packages --> Providers[Official and authorized providers]
+
+    Guards --> Firestore[(Firestore device-scoped state)]
+    Synthesis --> Firestore
+    Active --> Firestore
+    Firestore --> API
+
+    API --> Secrets[Secret Manager]
+    Flutter --> Local[(Local preferences, itineraries, and cache)]
+```
+
+### Modular Agentic Design
+
+The backend separates reasoning from authority so agents can be specialized
+without receiving unrestricted control:
+
+- **Planning orchestration** uses sequential stages for intake, verification,
+  and synthesis, with bounded parallel retrieval for independent Maps, weather,
+  and grounded-search work.
+- **Specialist retrieval agents** focus on food, culture, current events,
+  logistics, and hidden gems. Their outputs are evidence, never instructions.
+- **Merge and verification modules** normalize candidates, preserve citations,
+  remove duplicates, score freshness and relevance, and reject unsupported
+  claims before planner synthesis.
+- **Activity action modules** isolate informational Q&A, package discovery,
+  booking intake, venue-contact resolution, and language selection rather than
+  routing every request through one oversized agent.
+- **ACTIVE itinerary modules** process location/deviation events only through
+  lifecycle and permission gates, and return recovery proposals that require
+  acceptance instead of silently rewriting an itinerary.
+- **Deterministic services remain authoritative** for schemas, persistence,
+  one-ACTIVE-itinerary enforcement, URL allowlisting, source checks, call
+  confirmation, PII scrubbing, and all external side effects.
+- **Graceful degradation** allows one retrieval lane to fail without inventing
+  evidence or collapsing the entire workflow; unavailable capabilities return
+  bounded fallbacks or clear user-facing errors.
+
+This structure keeps agents independently testable and replaceable while the
+public API contracts, safety boundaries, and storage model remain stable.
+
 ## Repository Layout
 
 - `wanderlust-backend/` - FastAPI, Google ADK, Cloud Run, Firestore, Maps,
