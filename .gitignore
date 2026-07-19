@@ -1,0 +1,12 @@
+.DS_Store
+/references/
+
+# Local environment and credential material must never enter the public repo.
+.env
+.env.*
+*.pem
+*.p12
+*.key
+*.mobileprovision
+*service-account*.json
+*service_account*.json

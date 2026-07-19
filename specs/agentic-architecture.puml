@@ -1,0 +1,228 @@
+@startuml
+title Agentic Trip Planner - Current ADK Workflow Implementation
+
+' Sequence-style PlantUML is used intentionally so this diagram does not
+' require Graphviz dot to render in lightweight PlantUML environments.
+
+actor User
+participant "Mobile App" as App
+participant "Local Preference Onboarding" as PreferenceOnboarding
+participant "Itinerary Onboarding" as ItineraryOnboarding
+participant "Itinerary Page\n(Saved Itineraries + Add Itinerary)" as Repository
+participant "Device Location Service\n(iOS Core Location / Android Fused Location)" as Location
+participant "Backend Agent API" as API
+participant "Permission + Privacy Gate" as Privacy
+participant "Itinerary Lifecycle Service\n(ACTIVE / INACTIVE / COMPLETED)" as Lifecycle
+participant "ADKPlanningWorkflowService\nSequential planning workflow" as PlanningService
+participant "ActiveEventWorkflowService\n(current ACTIVE event service)" as ActiveService
+participant "ADK Parallel Retrieval\nParallelAgent pattern + bounded join" as Retrieval
+participant "Grounded Search LlmAgents\nFood / Culture / Events / Logistics / Hidden Gems" as SearchAgents
+participant "Merge + Dedupe + Rank Node\nFunction node + verification gate" as MergeFilter
+participant "ChatAgentService\nChat + booking classifier LlmAgent" as ChatAgent
+participant "BookingCallService\nTwilio + Gemini Live bridge" as Booking
+participant "CommerceActionService\nactivity-scoped package search + provider checkout" as Commerce
+participant "AskAnythingActionService\ninformational chat + CTA routing" as AskAnything
+participant "ADK Workflow Registry\nLlmAgent + SequentialAgent + ParallelAgent\n- intake\n- discovery\n- verification\n- planner\n- booking intake\n- booking voice" as Agents
+participant "Service Validators + Guardrails\ncurrent typed schemas and deterministic checks" as Validators
+participant "External Client Wrappers\nMaps / Routes / Weather / Gemini Grounding" as Tools
+database "Device-Local Cache\nanonymous device id + offline app cache" as StaticPreferences
+database "Cloud Firestore App State\nX-User-Id scoped preferences,\nitineraries, dynamic behavior" as Preferences
+database "Cloud Firestore Itinerary Store\nrepository + ACTIVE status" as ItineraryStore
+database "Cloud Firestore Evidence Cache\nplace + source evidence" as Cache
+database "Cloud Firestore Call Logs\nredacted status metadata" as CallLogs
+collections "External APIs\n- Google Places API (New)\n- Google Routes API\n- Google Geocoding API\n- Google Weather API\n- ADK Google Search Grounding\n- TikTok Research / Display APIs (approved only)\n- Instagram Graph API (approved only)\n- Official Venue Websites" as External
+collections "Call APIs\n- Twilio Programmable Voice\n- Twilio Media Streams\n- Gemini Live API" as CallExternal
+collections "Commerce Providers\n- official venue checkout pages\n- authorized ticket/package providers\n- Stripe Checkout only when legitimately provider-backed" as CommerceExternal
+
+note over PlanningService, Booking
+  Current code now exposes ADK workflow objects for planning,
+  parallel specialist retrieval, chat classification, and booking.
+  Deterministic FastAPI services still own persistence, side effects,
+  schema validation, explicit confirmation, and PII scrubbing.
+end note
+
+User -> App: Open app
+
+opt First-use local preference onboarding
+  App -> PreferenceOnboarding: Capture baseline preferences
+  PreferenceOnboarding -> StaticPreferences: Save structured preferences locally
+end
+
+opt Generate itinerary
+  User -> App: Start itinerary onboarding
+  App -> ItineraryOnboarding: Capture destination, days, regions, day start/end places and times
+  ItineraryOnboarding -> API: Submit itinerary brief
+  API -> StaticPreferences: Load completed local preference profile
+  API -> PlanningService: generate_itinerary(user_id, brief, preferences)
+  PlanningService -> Agents: Attach current ADK agent names for audit metadata
+  PlanningService -> Preferences: Read itinerary-scoped behavior profile when available
+  StaticPreferences --> PlanningService: Static preference profile
+  Preferences --> PlanningService: Dynamic behavior profile
+  PlanningService -> Retrieval: Fan out bounded retrieval lanes
+  par Google Maps lane
+    Retrieval -> Validators: Validate Maps arguments and bounded request scope
+    Retrieval -> Tools: Places text search + Geocoding + Routes context
+    Tools -> External: Google Places / Geocoding / Routes
+    External --> Tools: Maps evidence
+    Tools --> Retrieval: Candidate places
+  and Weather lane
+    Retrieval -> Validators: Validate Weather request
+    Retrieval -> Tools: Region geocode + current weather
+    Tools -> External: Google Weather API
+    External --> Tools: Weather context
+    Tools --> Retrieval: Weather evidence
+  and Google Search grounding lane
+    Retrieval -> Validators: Treat grounded web text as evidence, not instructions
+    Retrieval -> SearchAgents: Run specialist grounded search agents in parallel
+    SearchAgents -> External: Gemini Google Search grounding
+    External --> SearchAgents: Cited current web evidence
+    SearchAgents --> Retrieval: Structured grounded candidates
+  end
+  Retrieval -> MergeFilter: Join branches; merge, dedupe, rank, and filter untrusted evidence
+  MergeFilter -> Cache: Read/write verified place evidence
+  Cache --> MergeFilter: Cached evidence
+  MergeFilter --> PlanningService: Verified candidate set + source context
+  PlanningService -> Validators: Pydantic schema validation + recommendation guardrail
+  PlanningService -> Tools: GeminiPlannerClient generate_content
+  Tools -> External: Gemini model
+  External --> Tools: Planner JSON
+  Tools --> PlanningService: PlannerItineraryOutput
+  PlanningService -> PlanningService: Enforce mandatory day rules after model output
+  PlanningService --> API: Final itinerary + evidence + recommendations + agent names
+  API -> ItineraryStore: Save itinerary as INACTIVE
+  API --> App: Show itinerary
+end
+
+opt Chat about itinerary
+  User -> App: Ask agent to edit timing, mode, route gap, recommend, or redo
+  App -> API: Submit chat context and explicit scope
+  API -> ChatAgent: process_message(message, itinerary, day, gap, scope)
+  ChatAgent -> Validators: Prompt-scope and action allowlist instructions
+  ChatAgent -> Tools: Gemini generate_content
+  Tools -> External: Gemini model
+  External --> Tools: Structured chat JSON
+  Tools --> ChatAgent: Parsed action payload
+  ChatAgent -> Validators: Validate typed action before returning
+  alt Simple validated edit
+    ChatAgent --> API: Validated mutation payload
+    API -> ItineraryStore: Persist timing / mode / route-gap stop
+    API --> App: Updated itinerary
+    App -> ItineraryStore: Replace local itinerary copy
+  else Recommendation only
+    ChatAgent --> API: Recommendation response
+    API --> App: Show recommendation without mutation
+  else Whole-day or whole-trip redo
+    ChatAgent --> API: Proposal response, no persistence
+    API --> App: Show proposal for explicit acceptance
+    User -> App: Accept or dismiss proposal
+    App -> ItineraryStore: Persist locally only after acceptance
+  else Guardrail violation
+    ChatAgent --> API: Safe refusal
+    API --> App: Safe refusal
+  end
+end
+
+opt Activity Actions hub
+  User -> App: Tap Actions on selected activity
+  App -> API: Request activity action context
+  API -> Validators: Validate itinerary/day/activity scope
+  API --> App: Show Call the Venue / Book or Buy Packages / Ask Agent Anything
+
+  alt Call the Venue
+    User -> App: Choose agent-assisted booking or manual call
+    App -> API: Submit selected venue-call flow context
+    API -> Booking: Resolve venue point of contact
+    Booking -> Tools: Google Places phone lookup
+    Tools -> External: Places text search/details evidence
+    External --> Tools: Venue phone when available
+    alt Agent-assisted booking
+      App -> API: Stepwise booking intake\ncontact -> name -> future date/time -> pax -> callback -> remarks
+      API -> ChatAgent: Validate and normalize booking details
+      ChatAgent -> Validators: Future time, pax, contact, callback, summary/script checks
+      API --> App: Editable summary + Gemini Live phone script
+      User -> App: Confirm Call using agent
+      App -> API: Start booking call with confirmed=true
+      API -> Validators: Explicit PLACE_CALL confirmation
+      API -> Booking: Start Twilio call
+      Booking -> CallExternal: Twilio outbound call + TwiML Connect Stream
+      CallExternal -> Booking: WSS media stream
+      Booking -> CallExternal: Gemini Live voice bridge\npress 1 repeat via Gemini Live\npress 2 confirm / press 3 decline
+      Booking -> CallLogs: Write redacted status transition metadata when enabled
+      alt Callee presses 2
+        Booking --> API: Booked status + scrubbed summary
+        API --> App: Show booked result
+      else Callee presses 3
+        Booking --> API: Declined status + scrubbed summary
+        API --> App: Show declined result
+      else Hangup/failure before confirmation
+        Booking --> API: Failed/unconfirmed status + fallback instructions
+        API --> App: Show instructional chat fallback
+      end
+    else Manual venue call
+      Booking --> API: Venue contact or no-contact result
+      API --> App: Show point of contact and optional generated call script
+    end
+
+  else Book or Buy Packages
+    User -> App: Search or view top packages
+    App -> API: Activity-scoped package search request
+    API -> Commerce: Retrieve verified official/authorized package options
+    Commerce -> Tools: Grounded search and provider verification
+    Tools -> External: Official venue/provider evidence
+    Commerce -> CommerceExternal: Validate provider checkout URL or Stripe-backed flow
+    Commerce --> API: Package cards, detail, and checkout handoff metadata
+    API --> App: Show package list/detail
+    User -> App: Explicitly open provider checkout
+    App -> CommerceExternal: External browser checkout
+
+  else Ask Agent Anything
+    User -> App: Ask informational activity question
+    App -> API: Activity-scoped ask-anything request
+    API -> AskAnything: Answer, refuse, or recommend action CTA
+    AskAnything -> Tools: Grounded model/retrieval when needed
+    Tools -> External: Verified sources
+    AskAnything --> API: Informational answer + optional Call/Buy CTA
+    API --> App: Show answer or route CTA
+  end
+end
+
+opt Manage Itinerary Page
+  User -> App: Add itinerary / start / stop / mark completed / delete / export PDF / add itinerary preference
+  App -> Repository: Select itinerary action
+  Repository -> API: Submit explicit request context
+  API -> Lifecycle: Enforce status and one ACTIVE itinerary
+  Lifecycle -> ItineraryStore: Update ACTIVE / INACTIVE / COMPLETED status
+  Lifecycle -> StaticPreferences: Add itinerary preference or apply local preference reset when requested
+  Lifecycle --> API: Lifecycle result
+  API --> App: Updated repository state
+end
+
+alt Itinerary is INACTIVE or COMPLETED
+  Lifecycle -> App: All active services disabled
+  note right of App
+    Hard stop:
+    no workflow
+    no location
+    no suggestions
+  end note
+else Itinerary is ACTIVE
+  Lifecycle -> Location: Enable location for started itinerary only
+  Location -> API: Location / itinerary event
+  API -> Privacy: Check active permission and policy
+  Privacy -> Lifecycle: Confirm one ACTIVE itinerary
+  Lifecycle -> ItineraryStore: Read active itinerary
+  Privacy -> ActiveService: ingest_location_event(event, itinerary, repositories)
+  ActiveService -> Validators: assert_can_ingest_active_event(ACTIVE only)
+  ActiveService -> StaticPreferences: Read latest preference version
+  ActiveService -> Preferences: Read/write dynamic behavior preferences
+  ActiveService -> ActiveService: Publish local location event
+  alt Deviation detected
+    ActiveService -> ItineraryStore: Create pending recovery proposal
+  else No deviation
+    ActiveService -> ActiveService: No recovery proposal
+  end
+  ActiveService --> API: Ingestion result
+  API --> App: Highlight arrival or present user-confirmed recovery
+end
+
+@enduml

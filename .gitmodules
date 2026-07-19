@@ -1,0 +1,6 @@
+[submodule "wanderlust-backend"]
+	path = wanderlust-backend
+	url = https://github.com/Tyruxx/wanderlust-backend.git
+[submodule "wanderlust-frontend-flutter"]
+	path = wanderlust-frontend-flutter
+	url = https://github.com/Tyruxx/wanderlust-frontend-flutter.git
