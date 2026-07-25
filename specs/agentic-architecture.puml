@@ -216,16 +216,17 @@ opt Activity Actions hub
 end
 
 opt Manage Itinerary Page
-  User -> App: Add itinerary / start / stop / mark completed / delete / export PDF / add itinerary preference
+  User -> App: New trip / start / stop / mark done / undo done / delete / download PDF / save as style
   App -> Repository: Select itinerary action
-  Repository -> API: Submit explicit request context + X-User-Id
-  API -> Guards: Validate lifecycle request
-  API -> Lifecycle: Enforce status and one ACTIVE itinerary
-  Lifecycle -> Preferences: Update ACTIVE / INACTIVE / COMPLETED status
-  Lifecycle -> LocalCache: Add itinerary preference or apply local preference reset when requested
-  Lifecycle --> API: Lifecycle result
-  API --> App: Updated repository state
-  App -> LocalCache: Sync local cache
+  note over Repository
+    All lifecycle CRUD is handled entirely in-app.
+    Pre-flight checks: date range and location proximity.
+    No backend call for lifecycle — backend is used only
+    for AI generation and active-location events.
+  end note
+  Repository -> LocalCache: Persist status / preference change directly
+  Repository -> Repository: Enforce one ACTIVE itinerary locally
+  Repository --> App: Updated state
 end
 
 alt Itinerary is INACTIVE or COMPLETED
@@ -239,7 +240,12 @@ alt Itinerary is INACTIVE or COMPLETED
   end note
 else Itinerary is ACTIVE
   Lifecycle -> Location: Enable location for started itinerary only
-  Location -> API: Location / itinerary event
+  Location -> API: Send location event (fire-and-forget)
+  note over API
+    Location events are sent to the backend but failures
+    are silently caught. The app never blocks on a failed
+    location event.
+  end note
   API -> Privacy: Check active permission and policy
   Privacy -> Lifecycle: Confirm one ACTIVE itinerary
   Lifecycle -> Preferences: Read active itinerary

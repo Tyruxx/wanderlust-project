@@ -1,7 +1,8 @@
 # Wanderlust Trip
 
 Wanderlust Trip is an iOS-first Flutter application backed by FastAPI and
-Google ADK workflows on Google Cloud Run. Production app state is stored in
+Google ADK workflows on Google Cloud Run. Frontend state (preferences,
+itineraries, cache) is stored in local SQLite; backend state is stored in
 Firestore under the anonymous device ID sent as `X-User-Id`. The backend is a
 cloud-only runtime; developers run Flutter locally against the deployed HTTPS
 service.
@@ -39,12 +40,15 @@ while you travel without surrendering control.**
 
 ## App Architecture
 
-Wanderlust uses a local-first Flutter client with a cloud-only backend. Flutter
-owns the mobile experience, local preferences/cache, map interaction, location
+Wanderlust uses a local-first Flutter client with a cloud-only backend. All
+frontend CRUD (preferences, itineraries, lifecycle) is persisted to local
+SQLite. Flutter owns the mobile experience, map interaction, location
 permissions, and explicit confirmation UI. Cloud Run hosts FastAPI, Google ADK
 workflows, deterministic policy gates, and integrations that require protected
-server credentials. Firestore stores backend state under an anonymous device
-scope rather than an end-user account.
+server credentials. Firestore stores backend state (AI generation context,
+location events) under an anonymous device scope rather than an end-user
+account. Only AI itinerary generation and active-location events reach the
+backend; preference and itinerary lifecycle management is fully offline.
 
 ```mermaid
 flowchart TB

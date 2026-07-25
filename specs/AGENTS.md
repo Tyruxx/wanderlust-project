@@ -68,10 +68,15 @@ Before Flutter changes:
 - `03-product-workflows-and-guardrails.md` — guardrails that the UI must enforce.
 - `../skills/wanderlust-agentic-security/SKILL.md` — security practices for client-side API keys and local persistence.
 
-## Backend Direction
+## Architecture Direction
 
 - No end-user identity-provider. Backend receives `X-User-Id` header only.
-- Production backend features run on Cloud Run. Backend app state is stored in
+- **Frontend is local-first.** All CRUD (preferences, itineraries, lifecycle) is
+  persisted to local SQLite. Only AI itinerary generation and active-location
+  events reach the backend. Preference and itinerary management is fully
+  offline.
+- **Backend is cloud-only.** Production backend features run on Cloud Run.
+  Backend app state (AI generation context, location events) is stored in
   Firestore using the anonymous `X-User-Id` device ID as the user scope.
 - SQLite/in-memory backend repositories are isolated test fixtures only; a
   locally running backend is not a supported application runtime.
