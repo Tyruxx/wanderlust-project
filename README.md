@@ -65,7 +65,7 @@ flowchart TB
     Planner --> Intake[Sequential intake and normalization]
     Intake --> Retrieval[Parallel retrieval fan-out]
     Retrieval --> Maps[Places, Routes, Geocoding, Weather]
-    Retrieval --> Search[Grounded search specialist agents]
+    Retrieval --> Search[Grounded search specialist agents<br/>Food / Culture / Events / Logistics / Hidden Gems]
     Maps --> Verify[Merge, dedupe, rank, and verify]
     Search --> Verify
     Verify --> Synthesis[Planner synthesis]
@@ -131,7 +131,7 @@ flowchart TD
     subgraph Retrieval[Parallel retrieval]
         Maps["Maps lane<br/>Places and geocoding"]
         Weather["Weather lane<br/>Current weather and forecast"]
-        Search["ADK ParallelAgent<br/>5 grounded specialists"]
+        Search["ADK ParallelAgent<br/>Food / Culture / Events /<br/>Logistics / Hidden Gems"]
     end
 
     FanOut --> Maps
