@@ -78,13 +78,13 @@ flowchart TB
     Booking --> Live[Gemini Live voice bridge]
     Packages --> Providers[Official and authorized providers]
 
-    Guards --> Firestore[(Firestore device-scoped state)]
+    Guards --> Firestore[(Firestore backend operational state)]
     Synthesis --> Firestore
     Active --> Firestore
     Firestore --> API
 
     API --> Secrets[Secret Manager]
-    Flutter --> Local[(Local preferences, itineraries, and cache)]
+    Flutter --> Local[(Local SQLite — itineraries, preferences, cache)]
 ```
 
 ### Modular Agentic Design
