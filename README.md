@@ -1,11 +1,12 @@
 # Wanderlust Trip
 
 Wanderlust Trip is an iOS-first Flutter application backed by FastAPI and
-Google ADK workflows on Google Cloud Run. Frontend state (preferences,
-itineraries, cache) is stored in local SQLite; backend state is stored in
-Firestore under the anonymous device ID sent as `X-User-Id`. The backend is a
-cloud-only runtime; developers run Flutter locally against the deployed HTTPS
-service.
+Google ADK workflows on Google Cloud Run. **Your itineraries and preferences
+never leave your device** — all frontend state is stored in local SQLite.
+The backend uses Firestore only for its own operational context (AI generation
+state, location events) under the anonymous device ID sent as `X-User-Id`.
+The backend is a cloud-only runtime; developers run Flutter locally against the
+deployed HTTPS service.
 
 ## Problem Statement
 
@@ -40,14 +41,15 @@ while you travel without surrendering control.**
 
 ## App Architecture
 
-Wanderlust uses a local-first Flutter client with a cloud-only backend. All
-frontend CRUD (preferences, itineraries, lifecycle) is persisted to local
-SQLite. Flutter owns the mobile experience, map interaction, location
-permissions, and explicit confirmation UI. Cloud Run hosts FastAPI, Google ADK
-workflows, deterministic policy gates, and integrations that require protected
-server credentials. Firestore stores backend state (AI generation context,
-location events) under an anonymous device scope rather than an end-user
-account. Only AI itinerary generation and active-location events reach the
+Wanderlust uses a local-first Flutter client with a cloud-only backend. **All
+itineraries, preferences, and trip history are stored exclusively in local
+SQLite — they never touch the cloud.** Flutter owns the mobile experience, map
+interaction, location permissions, and explicit confirmation UI. Cloud Run
+hosts FastAPI, Google ADK workflows, deterministic policy gates, and
+integrations that require protected server credentials. The backend uses
+Firestore only for its own operational state (AI generation context, location
+events) under an anonymous device scope, not for user itineraries or
+preferences. Only AI itinerary generation and active-location events reach the
 backend; preference and itinerary lifecycle management is fully offline.
 
 ```mermaid
@@ -193,8 +195,9 @@ git submodule update --init --recursive
 ## Deploy The Backend To Google Cloud
 
 The backend is not run locally. Cloud Run is required for all API features and
-for Twilio HTTPS/WSS callbacks. Firestore is the production source of truth for
-device-scoped backend state.
+for Twilio HTTPS/WSS callbacks. Firestore stores backend-only operational state
+(AI generation context, location events); user itineraries and preferences
+never leave the device.
 
 ### 1. Authenticate And Select The Project
 
