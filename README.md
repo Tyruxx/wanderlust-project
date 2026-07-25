@@ -130,7 +130,7 @@ flowchart TD
 
     subgraph Retrieval[Parallel retrieval]
         Maps["Maps lane<br/>Places and geocoding"]
-        Weather["Weather lane<br/>Destination context"]
+        Weather["Weather lane<br/>Current weather and forecast"]
         Search["ADK ParallelAgent<br/>5 grounded specialists"]
     end
 

@@ -83,7 +83,7 @@ opt Generate itinerary
     Retrieval -> Guards: Validate Weather request
     Retrieval -> Tools: Region geocode + current weather
     Tools -> External: Google Weather API
-    External --> Tools: Weather context
+    External --> Tools: Current weather and forecast
     Tools --> Retrieval: Weather evidence
   and Google Search grounding lane
     Retrieval -> Guards: Treat grounded web text as evidence, not instructions
