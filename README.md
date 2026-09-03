@@ -251,12 +251,19 @@ printf '%s' "$TWILIO_FROM_NUMBER" | gcloud secrets versions add twilio-from-numb
 ### 5. Build And Deploy Cloud Run
 
 ```bash
+./scripts/deploy_cloud_run.sh --preflight
 ./scripts/deploy_cloud_run.sh
 ```
 
 The script builds the checked-out backend source with Cloud Build, deploys it to
 Cloud Run, configures Firestore-backed state and call logs, and prints the
-service URL. Save that URL in the ignored environment file:
+service URL. It safely loads allowlisted deployment settings from the ignored
+`.env`, while already-exported shell values take precedence. Preflight is
+read-only and checks the active Google account, required Secret Manager
+versions, and current service state. If the service was deleted or has never
+been deployed, preflight reports that deployment will create it.
+
+Save the returned URL in the ignored environment file:
 
 ```dotenv
 PUBLIC_BACKEND_BASE_URL=https://YOUR_CLOUD_RUN_SERVICE_URL

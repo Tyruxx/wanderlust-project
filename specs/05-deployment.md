@@ -49,6 +49,11 @@ The repository provides two infrastructure paths:
 Do not operate both paths as competing owners of the same resources without
 reconciling Terraform state.
 
+Run `wanderlust-backend/scripts/deploy_cloud_run.sh --preflight` before direct
+deployment. The preflight is read-only, validates the active account and
+required secret versions, and treats a missing Cloud Run service as a valid
+create-on-deploy state.
+
 ## Secrets
 
 - Local deployment/build values may live only in the ignored
